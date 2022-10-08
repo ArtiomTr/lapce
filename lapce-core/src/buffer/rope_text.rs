@@ -5,7 +5,7 @@ use xi_rope::{interval::IntervalBounds, Cursor, Rope};
 
 use crate::{
     encoding::{offset_utf16_to_utf8, offset_utf8_to_utf16},
-    word::WordCursor,
+    word::ModalWordCursor,
 };
 
 pub struct RopeText<'a> {
@@ -173,13 +173,13 @@ impl<'a> RopeText<'a> {
             line
         };
         let line_start_offset = self.text.offset_of_line(line);
-        WordCursor::new(self.text, line_start_offset).next_non_blank_char()
+        ModalWordCursor::new(self.text, line_start_offset).next_non_blank_char()
     }
 
     pub fn indent_on_line(&self, line: usize) -> String {
         let line_start_offset = self.text.offset_of_line(line);
         let word_boundary =
-            WordCursor::new(self.text, line_start_offset).next_non_blank_char();
+            ModalWordCursor::new(self.text, line_start_offset).next_non_blank_char();
         let indent = self.text.slice_to_cow(line_start_offset..word_boundary);
         indent.to_string()
     }

@@ -19,13 +19,14 @@ use xi_rope::{
 };
 
 use crate::{
+    bracket::BracketCursor,
     cursor::CursorMode,
     editor::EditType,
     indent::{auto_detect_indent_style, IndentStyle},
     mode::Mode,
     selection::Selection,
     syntax::Syntax,
-    word::WordCursor,
+    word::{ModalWordCursor, WordCursor},
 };
 
 pub mod rope_text;
@@ -748,11 +749,11 @@ impl Buffer {
     }
 
     pub fn prev_code_boundary(&self, offset: usize) -> usize {
-        WordCursor::new(&self.text, offset).prev_code_boundary()
+        ModalWordCursor::new(&self.text, offset).prev_code_boundary()
     }
 
     pub fn next_code_boundary(&self, offset: usize) -> usize {
-        WordCursor::new(&self.text, offset).next_code_boundary()
+        ModalWordCursor::new(&self.text, offset).next_code_boundary()
     }
 
     pub fn move_left(&self, offset: usize, mode: Mode, count: usize) -> usize {
@@ -815,14 +816,14 @@ impl Buffer {
     }
 
     pub fn select_word(&self, offset: usize) -> (usize, usize) {
-        WordCursor::new(&self.text, offset).select_word()
+        ModalWordCursor::new(&self.text, offset).select_word()
     }
 
     pub fn char_at_offset(&self, offset: usize) -> Option<char> {
         if self.is_empty() {
             return None;
         }
-        WordCursor::new(&self.text, offset)
+        ModalWordCursor::new(&self.text, offset)
             .inner
             .peek_next_codepoint()
     }
@@ -836,7 +837,7 @@ impl Buffer {
         if let Some(syntax) = syntax {
             syntax.find_tag(offset, true, &c.to_string())
         } else {
-            WordCursor::new(&self.text, offset).previous_unmatched(c)
+            BracketCursor::new(&self.text, offset).previous_unmatched(c)
         }
     }
 
@@ -872,9 +873,9 @@ impl Buffer {
         mut find_next: F,
     ) -> usize
     where
-        F: FnMut(&mut WordCursor) -> Option<usize>,
+        F: FnMut(&mut dyn WordCursor) -> Option<usize>,
     {
-        let mut cursor = WordCursor::new(self.text(), offset);
+        let mut cursor = ModalWordCursor::new(self.text(), offset);
         let mut new_offset = offset;
         while count != 0 {
             // FIXME: wait for if-let-chain

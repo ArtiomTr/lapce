@@ -1,3 +1,4 @@
+pub mod bracket;
 pub mod buffer;
 pub mod chars;
 pub mod command;

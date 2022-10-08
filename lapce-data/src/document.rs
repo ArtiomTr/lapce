@@ -15,6 +15,7 @@ use druid::{
 };
 use itertools::Itertools;
 use lapce_core::{
+    bracket::BracketCursor,
     buffer::{Buffer, DiffLines, InvalLines},
     command::{EditCommand, MultiSelectionCommand},
     cursor::{ColPosition, Cursor, CursorMode},
@@ -26,7 +27,6 @@ use lapce_core::{
     selection::{SelRegion, Selection},
     style::line_styles,
     syntax::Syntax,
-    word::WordCursor,
 };
 use lapce_rpc::{
     buffer::BufferId,
@@ -2514,7 +2514,7 @@ impl Document {
                         .unwrap_or(offset);
                     (new_offset, None)
                 } else {
-                    let new_offset = WordCursor::new(self.buffer.text(), offset)
+                    let new_offset = BracketCursor::new(self.buffer.text(), offset)
                         .next_unmatched(*c)
                         .map_or(offset, |new| new - 1);
                     (new_offset, None)
@@ -2527,7 +2527,7 @@ impl Document {
                         .unwrap_or(offset);
                     (new_offset, None)
                 } else {
-                    let new_offset = WordCursor::new(self.buffer.text(), offset)
+                    let new_offset = BracketCursor::new(self.buffer.text(), offset)
                         .previous_unmatched(*c)
                         .unwrap_or(offset);
                     (new_offset, None)
@@ -2539,7 +2539,7 @@ impl Document {
                         syntax.find_matching_pair(offset).unwrap_or(offset);
                     (new_offset, None)
                 } else {
-                    let new_offset = WordCursor::new(self.buffer.text(), offset)
+                    let new_offset = BracketCursor::new(self.buffer.text(), offset)
                         .match_pairs()
                         .unwrap_or(offset);
                     (new_offset, None)

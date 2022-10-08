@@ -1,7 +1,5 @@
 use xi_rope::{Cursor, Rope, RopeInfo};
 
-use crate::syntax::util::{matching_char, matching_pair_direction};
-
 /// Describe char classifications used to compose word boundaries
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum CharClassification {
@@ -48,28 +46,182 @@ impl WordBoundary {
 /// A cursor providing utility function to navigate the rope
 /// by word boundaries.
 /// Boundaries can be the start of a word, its end, punctuation etc.
-pub struct WordCursor<'a> {
+// pub struct WordCursor<'a> {
+//     pub(crate) inner: Cursor<'a, RopeInfo>,
+// }
+
+pub struct ModalWordCursor<'a> {
     pub(crate) inner: Cursor<'a, RopeInfo>,
 }
 
-impl<'a> WordCursor<'a> {
-    pub fn new(text: &'a Rope, pos: usize) -> WordCursor<'a> {
+pub trait WordCursor {
+    fn prev_boundary(&mut self) -> Option<usize>;
+
+    fn prev_deletion_boundary(&mut self) -> Option<usize>;
+
+    fn next_boundary(&mut self) -> Option<usize>;
+
+    fn end_boundary(&mut self) -> Option<usize>;
+
+    fn prev_code_boundary(&mut self) -> usize;
+
+    fn next_code_boundary(&mut self) -> usize;
+
+    fn select_word(&mut self) -> (usize, usize);
+}
+
+impl<'a> ModalWordCursor<'a> {
+    pub fn new(text: &'a Rope, pos: usize) -> ModalWordCursor<'a> {
         let inner = Cursor::new(text, pos);
-        WordCursor { inner }
+        ModalWordCursor { inner }
+    }
+
+    /// Get the position of the next non blank character in the rope
+    ///
+    /// **Example:**
+    ///
+    /// ```rust
+    /// # use lapce_core::word::{ WordCursor, ModalWordCursor };
+    /// # use xi_rope::Rope;
+    /// let rope = Rope::from("    world");
+    /// let mut cursor = ModalWordCursor::new(&rope, 0);
+    /// let char_position = cursor.next_non_blank_char();
+    /// assert_eq!(char_position, 4);
+    ///```
+    pub fn next_non_blank_char(&mut self) -> usize {
+        let mut candidate = self.inner.pos();
+        while let Some(next) = self.inner.next_codepoint() {
+            let prop = get_char_property(next);
+            if prop != CharClassification::Space {
+                break;
+            }
+            candidate = self.inner.pos();
+        }
+        self.inner.set(candidate);
+        candidate
+    }
+}
+
+impl<'a> WordCursor for ModalWordCursor<'a> {
+    /// Get the next start boundary of a word, and set the cursor position to the boundary found.
+    /// **Example:**
+    ///
+    /// ```rust
+    /// # use lapce_core::word::{ ModalWordCursor, WordCursor };
+    /// # use xi_rope::Rope;
+    /// let rope = Rope::from("Hello world");
+    /// let mut cursor = ModalWordCursor::new(&rope, 0);
+    /// let boundary = cursor.next_boundary();
+    /// assert_eq!(boundary, Some(6));
+    ///```
+    fn next_boundary(&mut self) -> Option<usize> {
+        if let Some(ch) = self.inner.next_codepoint() {
+            let mut prop = get_char_property(ch);
+            let mut candidate = self.inner.pos();
+            while let Some(next) = self.inner.next_codepoint() {
+                let prop_next = get_char_property(next);
+                if classify_boundary(prop, prop_next).is_start() {
+                    break;
+                }
+                prop = prop_next;
+                candidate = self.inner.pos();
+            }
+            self.inner.set(candidate);
+            return Some(candidate);
+        }
+        None
+    }
+
+    /// Get the next end boundary, and set the cursor position to the boundary found.
+    /// **Example:**
+    ///
+    /// ```rust
+    /// # use lapce_core::word::{ WordCursor, ModalWordCursor };
+    /// # use xi_rope::Rope;
+    /// let rope = Rope::from("Hello world");
+    /// let mut cursor = ModalWordCursor::new(&rope, 3);
+    /// let end_boundary = cursor.end_boundary();
+    /// assert_eq!(end_boundary, Some(5));
+    ///```
+    fn end_boundary(&mut self) -> Option<usize> {
+        self.inner.next_codepoint();
+        if let Some(ch) = self.inner.next_codepoint() {
+            let mut prop = get_char_property(ch);
+            let mut candidate = self.inner.pos();
+            while let Some(next) = self.inner.next_codepoint() {
+                let prop_next = get_char_property(next);
+                if classify_boundary(prop, prop_next).is_end() {
+                    break;
+                }
+                prop = prop_next;
+                candidate = self.inner.pos();
+            }
+            self.inner.set(candidate);
+            return Some(candidate);
+        }
+        None
+    }
+
+    /// Get the first matching [`CharClassification::Other`] backward and set the cursor position to this location .
+    /// **Example:**
+    ///
+    /// ```rust
+    /// # use lapce_core::word::{ WordCursor, ModalWordCursor };
+    /// # use xi_rope::Rope;
+    /// let text = "violet, are\n blue";
+    /// let rope = Rope::from(text);
+    /// let mut cursor = ModalWordCursor::new(&rope, 11);
+    /// let position = cursor.prev_code_boundary();
+    /// assert_eq!(&text[position..], "are\n blue");
+    ///```
+    fn prev_code_boundary(&mut self) -> usize {
+        let mut candidate = self.inner.pos();
+        while let Some(prev) = self.inner.prev_codepoint() {
+            let prop_prev = get_char_property(prev);
+            if prop_prev != CharClassification::Other {
+                break;
+            }
+            candidate = self.inner.pos();
+        }
+        candidate
+    }
+
+    /// Get the first matching [`CharClassification::Other`] forward and set the cursor position to this location .
+    /// **Example:**
+    ///
+    /// ```rust
+    /// # use lapce_core::word::{ WordCursor, ModalWordCursor };
+    /// # use xi_rope::Rope;
+    /// let text = "violet, are\n blue";
+    /// let rope = Rope::from(text);
+    /// let mut cursor = ModalWordCursor::new(&rope, 11);
+    /// let position = cursor.next_code_boundary();
+    /// assert_eq!(&text[position..], "\n blue");
+    ///```
+    fn next_code_boundary(&mut self) -> usize {
+        let mut candidate = self.inner.pos();
+        while let Some(prev) = self.inner.next_codepoint() {
+            let prop_prev = get_char_property(prev);
+            if prop_prev != CharClassification::Other {
+                break;
+            }
+            candidate = self.inner.pos();
+        }
+        candidate
     }
 
     /// Get the previous start boundary of a word, and set the cursor position to the boundary found.
     /// **Example:**
     ///
     /// ```rust
-    /// # use lapce_core::word::WordCursor;
+    /// # use lapce_core::word::{ WordCursor, ModalWordCursor };
     /// # use xi_rope::Rope;
     /// let rope = Rope::from("Hello world");
-    /// let mut cursor = WordCursor::new(&rope, 4);
+    /// let mut cursor = ModalWordCursor::new(&rope, 4);
     /// let boundary = cursor.prev_boundary();
     /// assert_eq!(boundary, Some(0));
     ///```
-    pub fn prev_boundary(&mut self) -> Option<usize> {
+    fn prev_boundary(&mut self) -> Option<usize> {
         if let Some(ch) = self.inner.prev_codepoint() {
             let mut prop = get_char_property(ch);
             let mut candidate = self.inner.pos();
@@ -92,18 +244,18 @@ impl<'a> WordCursor<'a> {
     /// **Example:**
     ///
     /// ```rust
-    /// # use lapce_core::word::WordCursor;
+    /// # use lapce_core::word::{ WordCursor, ModalWordCursor };
     /// # use xi_rope::Rope;
     /// let text = "violet are blue";
     /// let rope = Rope::from(text);
-    /// let mut cursor = WordCursor::new(&rope, 9);
+    /// let mut cursor = ModalWordCursor::new(&rope, 9);
     /// let position = cursor.prev_deletion_boundary();
     /// let position = position;
     ///
     /// assert_eq!(position, Some(7));
     /// assert_eq!(&text[..position.unwrap()], "violet ");
     ///```
-    pub fn prev_deletion_boundary(&mut self) -> Option<usize> {
+    fn prev_deletion_boundary(&mut self) -> Option<usize> {
         if let Some(ch) = self.inner.prev_codepoint() {
             let mut prop = get_char_property(ch);
             let mut candidate = self.inner.pos();
@@ -154,237 +306,20 @@ impl<'a> WordCursor<'a> {
         None
     }
 
-    /// Get the position of the next non blank character in the rope
-    ///
-    /// **Example:**
-    ///
-    /// ```rust
-    /// # use lapce_core::word::WordCursor;
-    /// # use xi_rope::Rope;
-    /// let rope = Rope::from("    world");
-    /// let mut cursor = WordCursor::new(&rope, 0);
-    /// let char_position = cursor.next_non_blank_char();
-    /// assert_eq!(char_position, 4);
-    ///```
-    pub fn next_non_blank_char(&mut self) -> usize {
-        let mut candidate = self.inner.pos();
-        while let Some(next) = self.inner.next_codepoint() {
-            let prop = get_char_property(next);
-            if prop != CharClassification::Space {
-                break;
-            }
-            candidate = self.inner.pos();
-        }
-        self.inner.set(candidate);
-        candidate
-    }
-
-    /// Get the next start boundary of a word, and set the cursor position to the boundary found.
-    /// **Example:**
-    ///
-    /// ```rust
-    /// # use lapce_core::word::WordCursor;
-    /// # use xi_rope::Rope;
-    /// let rope = Rope::from("Hello world");
-    /// let mut cursor = WordCursor::new(&rope, 0);
-    /// let boundary = cursor.next_boundary();
-    /// assert_eq!(boundary, Some(6));
-    ///```
-    pub fn next_boundary(&mut self) -> Option<usize> {
-        if let Some(ch) = self.inner.next_codepoint() {
-            let mut prop = get_char_property(ch);
-            let mut candidate = self.inner.pos();
-            while let Some(next) = self.inner.next_codepoint() {
-                let prop_next = get_char_property(next);
-                if classify_boundary(prop, prop_next).is_start() {
-                    break;
-                }
-                prop = prop_next;
-                candidate = self.inner.pos();
-            }
-            self.inner.set(candidate);
-            return Some(candidate);
-        }
-        None
-    }
-
-    /// Get the next end boundary, and set the cursor position to the boundary found.
-    /// **Example:**
-    ///
-    /// ```rust
-    /// # use lapce_core::word::WordCursor;
-    /// # use xi_rope::Rope;
-    /// let rope = Rope::from("Hello world");
-    /// let mut cursor = WordCursor::new(&rope, 3);
-    /// let end_boundary = cursor.end_boundary();
-    /// assert_eq!(end_boundary, Some(5));
-    ///```
-    pub fn end_boundary(&mut self) -> Option<usize> {
-        self.inner.next_codepoint();
-        if let Some(ch) = self.inner.next_codepoint() {
-            let mut prop = get_char_property(ch);
-            let mut candidate = self.inner.pos();
-            while let Some(next) = self.inner.next_codepoint() {
-                let prop_next = get_char_property(next);
-                if classify_boundary(prop, prop_next).is_end() {
-                    break;
-                }
-                prop = prop_next;
-                candidate = self.inner.pos();
-            }
-            self.inner.set(candidate);
-            return Some(candidate);
-        }
-        None
-    }
-
-    /// Get the first matching [`CharClassification::Other`] backward and set the cursor position to this location .
-    /// **Example:**
-    ///
-    /// ```rust
-    /// # use lapce_core::word::WordCursor;
-    /// # use xi_rope::Rope;
-    /// let text = "violet, are\n blue";
-    /// let rope = Rope::from(text);
-    /// let mut cursor = WordCursor::new(&rope, 11);
-    /// let position = cursor.prev_code_boundary();
-    /// assert_eq!(&text[position..], "are\n blue");
-    ///```
-    pub fn prev_code_boundary(&mut self) -> usize {
-        let mut candidate = self.inner.pos();
-        while let Some(prev) = self.inner.prev_codepoint() {
-            let prop_prev = get_char_property(prev);
-            if prop_prev != CharClassification::Other {
-                break;
-            }
-            candidate = self.inner.pos();
-        }
-        candidate
-    }
-
-    /// Get the first matching [`CharClassification::Other`] forward and set the cursor position to this location .
-    /// **Example:**
-    ///
-    /// ```rust
-    /// # use lapce_core::word::WordCursor;
-    /// # use xi_rope::Rope;
-    /// let text = "violet, are\n blue";
-    /// let rope = Rope::from(text);
-    /// let mut cursor = WordCursor::new(&rope, 11);
-    /// let position = cursor.next_code_boundary();
-    /// assert_eq!(&text[position..], "\n blue");
-    ///```
-    pub fn next_code_boundary(&mut self) -> usize {
-        let mut candidate = self.inner.pos();
-        while let Some(prev) = self.inner.next_codepoint() {
-            let prop_prev = get_char_property(prev);
-            if prop_prev != CharClassification::Other {
-                break;
-            }
-            candidate = self.inner.pos();
-        }
-        candidate
-    }
-
-    /// Looks for a matching pair character, either forward for opening chars (ex: `(`) or
-    /// backward for closing char (ex: `}`), and return the matched character position if found.
-    /// Will return `None` if the character under cursor is not matchable (see [`crate::syntax::util::matching_char`]).
-    ///
-    /// **Example:**
-    ///
-    /// ```rust
-    /// # use lapce_core::word::WordCursor;
-    /// # use xi_rope::Rope;
-    /// let text = "{ }";
-    /// let rope = Rope::from(text);
-    /// let mut cursor = WordCursor::new(&rope, 2);
-    /// let position = cursor.match_pairs();
-    /// assert_eq!(position, Some(0));
-    ///```
-    pub fn match_pairs(&mut self) -> Option<usize> {
-        let c = self.inner.peek_next_codepoint()?;
-        let other = matching_char(c)?;
-        let left = matching_pair_direction(other)?;
-        if left {
-            self.previous_unmatched(other)
-        } else {
-            self.inner.next_codepoint();
-            let offset = self.next_unmatched(other)?;
-            Some(offset - 1)
-        }
-    }
-
-    /// Take a matchable character and look cforward for the first unmatched one
-    /// ignoring the encountered matched pairs.
-    ///
-    /// **Example**:
-    /// ```rust
-    /// # use xi_rope::Rope;
-    /// # use lapce_core::word::WordCursor;
-    /// let rope = Rope::from("outer {inner}} world");
-    /// let mut cursor = WordCursor::new(&rope, 0);
-    /// let position = cursor.next_unmatched('}');
-    /// assert_eq!(position, Some(14));
-    ///  ```
-    pub fn next_unmatched(&mut self, c: char) -> Option<usize> {
-        let other = matching_char(c)?;
-        let mut n = 0;
-        while let Some(current) = self.inner.next_codepoint() {
-            if current == c && n == 0 {
-                return Some(self.inner.pos());
-            }
-            if current == other {
-                n += 1;
-            } else if current == c {
-                n -= 1;
-            }
-        }
-        None
-    }
-
-    /// Take a matchable character and look backward for the first unmatched one
-    /// ignoring the encountered matched pairs.
-    ///
-    /// **Example**:
-    ///
-    /// ```rust
-    /// # use xi_rope::Rope;
-    /// # use lapce_core::word::WordCursor;
-    /// let rope = Rope::from("outer {{inner} world");
-    /// let mut cursor = WordCursor::new(&rope, 15);
-    /// let position = cursor.previous_unmatched('{');
-    /// assert_eq!(position, Some(6));
-    ///  ```
-    pub fn previous_unmatched(&mut self, c: char) -> Option<usize> {
-        let other = matching_char(c)?;
-        let mut n = 0;
-        while let Some(current) = self.inner.prev_codepoint() {
-            if current == c && n == 0 {
-                return Some(self.inner.pos());
-            }
-            if current == other {
-                n += 1;
-            } else if current == c {
-                n -= 1;
-            }
-        }
-        None
-    }
-
     /// Return the previous and end boundaries of the word under cursor.
     ///
     /// **Example**:
     ///
     ///```rust
-    /// # use lapce_core::word::WordCursor;
+    /// # use lapce_core::word::{ WordCursor, ModalWordCursor };
     /// # use xi_rope::Rope;
     /// let text = "violet are blue";
     /// let rope = Rope::from(text);
-    /// let mut cursor = WordCursor::new(&rope, 9);
+    /// let mut cursor = ModalWordCursor::new(&rope, 9);
     /// let (start, end) = cursor.select_word();
     /// assert_eq!(&text[start..end], "are");
     ///```
-    pub fn select_word(&mut self) -> (usize, usize) {
+    fn select_word(&mut self) -> (usize, usize) {
         let initial = self.inner.pos();
         let end = self.next_code_boundary();
         self.inner.set(initial);
@@ -442,13 +377,14 @@ fn classify_boundary(
 
 #[cfg(test)]
 mod test {
+    use super::ModalWordCursor;
     use super::WordCursor;
     use xi_rope::Rope;
 
     #[test]
     fn prev_boundary_should_be_none_at_position_zero() {
         let rope = Rope::from("Hello world");
-        let mut cursor = WordCursor::new(&rope, 0);
+        let mut cursor = ModalWordCursor::new(&rope, 0);
         let boudary = cursor.prev_boundary();
         assert!(boudary.is_none())
     }
@@ -456,7 +392,7 @@ mod test {
     #[test]
     fn prev_boundary_should_be_zero_when_cursor_on_first_word() {
         let rope = Rope::from("Hello world");
-        let mut cursor = WordCursor::new(&rope, 4);
+        let mut cursor = ModalWordCursor::new(&rope, 4);
         let boundary = cursor.prev_boundary();
         assert_eq!(boundary, Some(0));
     }
@@ -464,7 +400,7 @@ mod test {
     #[test]
     fn prev_boundary_should_be_at_word_start() {
         let rope = Rope::from("Hello world");
-        let mut cursor = WordCursor::new(&rope, 9);
+        let mut cursor = ModalWordCursor::new(&rope, 9);
         let boundary = cursor.prev_boundary();
         assert_eq!(boundary, Some(6));
     }
@@ -472,7 +408,7 @@ mod test {
     #[test]
     fn should_get_next_word_boundary() {
         let rope = Rope::from("Hello world");
-        let mut cursor = WordCursor::new(&rope, 0);
+        let mut cursor = ModalWordCursor::new(&rope, 0);
         let boundary = cursor.next_boundary();
         assert_eq!(boundary, Some(6));
     }
@@ -480,7 +416,7 @@ mod test {
     #[test]
     fn next_word_boundary_should_be_none_at_last_position() {
         let rope = Rope::from("Hello world");
-        let mut cursor = WordCursor::new(&rope, 11);
+        let mut cursor = ModalWordCursor::new(&rope, 11);
         let boundary = cursor.next_boundary();
         assert_eq!(boundary, None);
     }
@@ -489,7 +425,7 @@ mod test {
     fn should_get_previous_code_boundary() {
         let text = "violet, are\n blue";
         let rope = Rope::from(text);
-        let mut cursor = WordCursor::new(&rope, 11);
+        let mut cursor = ModalWordCursor::new(&rope, 11);
         let position = cursor.prev_code_boundary();
         assert_eq!(&text[position..], "are\n blue");
     }
@@ -498,7 +434,7 @@ mod test {
     fn should_get_next_code_boundary() {
         let text = "violet, are\n blue";
         let rope = Rope::from(text);
-        let mut cursor = WordCursor::new(&rope, 11);
+        let mut cursor = ModalWordCursor::new(&rope, 11);
         let position = cursor.next_code_boundary();
         assert_eq!(&text[position..], "\n blue");
     }
@@ -506,7 +442,7 @@ mod test {
     #[test]
     fn get_next_non_blank_char_should_skip_whitespace() {
         let rope = Rope::from("Hello world");
-        let mut cursor = WordCursor::new(&rope, 5);
+        let mut cursor = ModalWordCursor::new(&rope, 5);
         let char_position = cursor.next_non_blank_char();
         assert_eq!(char_position, 6);
     }
@@ -514,7 +450,7 @@ mod test {
     #[test]
     fn get_next_non_blank_char_should_return_current_position_on_non_blank_char() {
         let rope = Rope::from("Hello world");
-        let mut cursor = WordCursor::new(&rope, 3);
+        let mut cursor = ModalWordCursor::new(&rope, 3);
         let char_position = cursor.next_non_blank_char();
         assert_eq!(char_position, 3);
     }
@@ -522,75 +458,16 @@ mod test {
     #[test]
     fn should_get_end_boundary() {
         let rope = Rope::from("Hello world");
-        let mut cursor = WordCursor::new(&rope, 3);
+        let mut cursor = ModalWordCursor::new(&rope, 3);
         let end_boundary = cursor.end_boundary();
         assert_eq!(end_boundary, Some(5));
-    }
-
-    #[test]
-    fn should_get_next_unmatched_char() {
-        let rope = Rope::from("hello { world");
-        let mut cursor = WordCursor::new(&rope, 0);
-        let position = cursor.next_unmatched('{');
-        assert_eq!(position, Some(7));
-    }
-
-    #[test]
-    fn should_get_next_unmatched_char_witch_matched_chars() {
-        let rope = Rope::from("hello {} world }");
-        let mut cursor = WordCursor::new(&rope, 0);
-        let position = cursor.next_unmatched('}');
-        assert_eq!(position, Some(16));
-    }
-
-    #[test]
-    fn should_get_previous_unmatched_char() {
-        let rope = Rope::from("hello { world");
-        let mut cursor = WordCursor::new(&rope, 12);
-        let position = cursor.previous_unmatched('{');
-        assert_eq!(position, Some(6));
-    }
-
-    #[test]
-    fn should_get_previous_unmatched_char_with_inner_matched_chars() {
-        let rope = Rope::from("{hello {} world");
-        let mut cursor = WordCursor::new(&rope, 10);
-        let position = cursor.previous_unmatched('{');
-        assert_eq!(position, Some(0));
-    }
-
-    #[test]
-    fn should_match_pair_forward() {
-        let text = "{ }";
-        let rope = Rope::from(text);
-        let mut cursor = WordCursor::new(&rope, 0);
-        let position = cursor.match_pairs();
-        assert_eq!(position, Some(2));
-    }
-
-    #[test]
-    fn should_match_pair_backward() {
-        let text = "{ }";
-        let rope = Rope::from(text);
-        let mut cursor = WordCursor::new(&rope, 2);
-        let position = cursor.match_pairs();
-        assert_eq!(position, Some(0));
-    }
-
-    #[test]
-    fn match_pair_should_be_none() {
-        let text = "{ }";
-        let rope = Rope::from(text);
-        let mut cursor = WordCursor::new(&rope, 1);
-        let position = cursor.match_pairs();
-        assert_eq!(position, None);
     }
 
     #[test]
     fn select_word_should_return_word_boundaries() {
         let text = "violet are blue";
         let rope = Rope::from(text);
-        let mut cursor = WordCursor::new(&rope, 9);
+        let mut cursor = ModalWordCursor::new(&rope, 9);
         let (start, end) = cursor.select_word();
         assert_eq!(&text[start..end], "are");
     }
@@ -599,7 +476,7 @@ mod test {
     fn should_get_deletion_boundary_backward() {
         let text = "violet are blue";
         let rope = Rope::from(text);
-        let mut cursor = WordCursor::new(&rope, 9);
+        let mut cursor = ModalWordCursor::new(&rope, 9);
         let position = cursor.prev_deletion_boundary();
         let position = position;
 

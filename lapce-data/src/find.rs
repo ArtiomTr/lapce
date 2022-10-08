@@ -1,5 +1,6 @@
 use lapce_core::{
     selection::{InsertDrift, SelRegion, Selection},
+    word::ModalWordCursor,
     word::WordCursor,
 };
 use regex::{Regex, RegexBuilder};
@@ -510,8 +511,8 @@ impl Find {
         start: usize,
         end: usize,
     ) -> bool {
-        let mut word_end_cursor = WordCursor::new(text, end - 1);
-        let mut word_start_cursor = WordCursor::new(text, start + 1);
+        let mut word_end_cursor = ModalWordCursor::new(text, end - 1);
+        let mut word_start_cursor = ModalWordCursor::new(text, start + 1);
 
         if word_start_cursor.prev_code_boundary() != start {
             return false;
