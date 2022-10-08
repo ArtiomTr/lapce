@@ -412,7 +412,7 @@ const LANGUAGES: &[SyntaxProperties] = &[
         indent: "  ",
         code_lens: (DEFAULT_CODE_LENS_LIST, DEFAULT_CODE_LENS_IGNORE_LIST),
         sticky_headers: &[],
-        extensions: &["hcl"],
+        extensions: &["hcl", "tf"],
     },
     #[cfg(feature = "lang-html")]
     SyntaxProperties {
@@ -915,8 +915,9 @@ mod test {
     // function(s) in the module become unused.  Hence turning off the lints.
     #![allow(unused, unreachable_code)]
 
-    use super::LapceLanguage;
     use std::path::PathBuf;
+
+    use super::LapceLanguage;
 
     fn assert_language(expected: LapceLanguage, exts: &[&str]) {
         for ext in exts {
@@ -1069,7 +1070,7 @@ mod test {
     }
     #[cfg(feature = "lang-hcl")]
     fn test_hcl_lang() {
-        assert_language(LapceLanguage::Hcl, &["hcl"]);
+        assert_language(LapceLanguage::Hcl, &["hcl", "tf"]);
     }
     #[cfg(feature = "lang-ocaml")]
     fn test_ocaml_lang() {

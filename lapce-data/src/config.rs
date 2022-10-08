@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     io::Write,
     path::{Path, PathBuf},
     sync::Arc,
@@ -9,11 +10,11 @@ use druid::{
     Color, ExtEventSink, FontFamily, Size, Target,
 };
 use indexmap::IndexMap;
+pub use lapce_proxy::APPLICATION_NAME;
 use lapce_proxy::{directory::Directory, plugin::wasi::find_all_volts};
 use once_cell::sync::Lazy;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use structdesc::FieldNames;
 use thiserror::Error;
 use toml_edit::easy as toml;
@@ -22,8 +23,6 @@ use crate::{
     command::{LapceUICommand, LAPCE_UI_COMMAND},
     data::{LapceWorkspace, LapceWorkspaceType},
 };
-
-pub use lapce_proxy::APPLICATION_NAME;
 
 pub const LOGO: &str = include_str!("../../extra/images/logo.svg");
 const DEFAULT_SETTINGS: &str = include_str!("../../defaults/settings.toml");
@@ -1002,14 +1001,13 @@ impl LapceConfig {
 
     /// Calculate the width of the character "W" (being the widest character)
     /// in the editor's current font family at the specified font size.
-    pub fn char_width(&self, text: &mut PietText, font_size: f64) -> f64 {
-        Self::editor_text_size_internal(
-            self.editor.font_family(),
-            font_size,
-            text,
-            "W",
-        )
-        .width
+    pub fn char_width(
+        &self,
+        text: &mut PietText,
+        font_size: f64,
+        font_family: FontFamily,
+    ) -> f64 {
+        Self::text_size_internal(font_family, font_size, text, "W").width
     }
 
     pub fn terminal_font_family(&self) -> FontFamily {
@@ -1039,7 +1037,11 @@ impl LapceConfig {
     /// Calculate the width of the character "W" (being the widest character)
     /// in the editor's current font family and current font size.
     pub fn editor_char_width(&self, text: &mut PietText) -> f64 {
-        self.char_width(text, self.editor.font_size as f64)
+        self.char_width(
+            text,
+            self.editor.font_size as f64,
+            self.editor.font_family(),
+        )
     }
 
     /// Calculate the width of `text_to_measure` in the editor's current font family and font size.
@@ -1048,7 +1050,7 @@ impl LapceConfig {
         text: &mut PietText,
         text_to_measure: &str,
     ) -> f64 {
-        Self::editor_text_size_internal(
+        Self::text_size_internal(
             self.editor.font_family(),
             self.editor.font_size as f64,
             text,
@@ -1063,7 +1065,7 @@ impl LapceConfig {
         text: &mut PietText,
         text_to_measure: &str,
     ) -> Size {
-        Self::editor_text_size_internal(
+        Self::text_size_internal(
             self.editor.font_family(),
             self.editor.font_size as f64,
             text,
@@ -1071,9 +1073,48 @@ impl LapceConfig {
         )
     }
 
+    /// Calculate the width of the character "W" (being the widest character)
+    /// in the editor's current font family and current font size.
+    pub fn terminal_char_width(&self, text: &mut PietText) -> f64 {
+        self.char_width(
+            text,
+            self.terminal_font_size() as f64,
+            self.terminal_font_family(),
+        )
+    }
+
+    /// Calculate the width of `text_to_measure` in the editor's current font family and font size.
+    pub fn terminal_text_width(
+        &self,
+        text: &mut PietText,
+        text_to_measure: &str,
+    ) -> f64 {
+        Self::text_size_internal(
+            self.terminal_font_family(),
+            self.terminal_font_size() as f64,
+            text,
+            text_to_measure,
+        )
+        .width
+    }
+
+    /// Calculate the size of `text_to_measure` in the terminal's current font family and font size.
+    pub fn terminal_text_size(
+        &self,
+        text: &mut PietText,
+        text_to_measure: &str,
+    ) -> Size {
+        Self::text_size_internal(
+            self.terminal_font_family(),
+            self.terminal_font_size() as f64,
+            text,
+            text_to_measure,
+        )
+    }
+
     /// Efficiently calculate the size of a piece of text, without allocating.
     /// This function should not be made public, use one of the public wrapper functions instead.
-    fn editor_text_size_internal(
+    fn text_size_internal(
         font_family: FontFamily,
         font_size: f64,
         text: &mut PietText,

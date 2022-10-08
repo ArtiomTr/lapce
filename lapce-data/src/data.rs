@@ -2,6 +2,7 @@ use std::{
     cell::RefCell,
     cmp::Ordering,
     collections::{HashMap, HashSet},
+    env,
     io::{BufReader, Read, Write},
     path::{Path, PathBuf},
     rc::Rc,
@@ -10,16 +11,12 @@ use std::{
     time::Instant,
 };
 
-#[cfg(target_os = "windows")]
-use std::env;
-
 use anyhow::{anyhow, Result};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use druid::{
     piet::PietText, theme, Command, Data, Env, EventCtx, ExtEventSink,
     FileDialogOptions, Lens, Point, Rect, Size, Target, Vec2, WidgetId, WindowId,
 };
-
 use itertools::Itertools;
 use lapce_core::{
     command::{FocusCommand, MultiSelectionCommand},
@@ -40,7 +37,6 @@ use lapce_rpc::{
     terminal::TermId,
     RpcMessage,
 };
-
 use lsp_types::{Diagnostic, DiagnosticSeverity, Position, ProgressToken, TextEdit};
 use notify::Watcher;
 use serde::{Deserialize, Serialize};
@@ -283,11 +279,15 @@ impl LapceData {
     }
 
     fn listen_local_socket(event_sink: ExtEventSink) -> Result<()> {
-        if let Ok(path) = std::env::current_exe() {
+        if let Ok(path) = env::current_exe() {
             if let Some(path) = path.parent() {
                 if let Some(path) = path.to_str() {
-                    if let Ok(current_path) = std::env::var("PATH") {
-                        std::env::set_var("PATH", format!("{path}:{current_path}"));
+                    if let Ok(current_path) = env::var("PATH") {
+                        let mut paths = vec![PathBuf::from(path)];
+                        paths.append(
+                            &mut env::split_paths(&current_path).collect::<Vec<_>>(),
+                        );
+                        env::set_var("PATH", env::join_paths(paths)?);
                     }
                 }
             }
@@ -1140,7 +1140,7 @@ impl LapceTabData {
             LapceWorkbenchCommand::RestartToUpdate => {
                 if let Some(release) = (*self.latest_release).clone() {
                     if release.version != *VERSION {
-                        if let Ok(process_path) = std::env::current_exe() {
+                        if let Ok(process_path) = env::current_exe() {
                             ctx.submit_command(Command::new(
                                 LAPCE_UI_COMMAND,
                                 LapceUICommand::RestartToUpdate(

@@ -1,40 +1,35 @@
-use std::collections::HashMap;
-use std::time::Duration;
-use std::{iter::Iterator, sync::Arc};
+use std::{collections::HashMap, iter::Iterator, sync::Arc, time::Duration};
 
 use druid::{
     kurbo::{BezPath, Line},
     piet::{PietText, PietTextLayout, Text, TextLayout as _, TextLayoutBuilder},
     BoxConstraints, Color, Command, Env, Event, EventCtx, InternalLifeCycle,
-    LayoutCtx, LifeCycle, LifeCycleCtx, MouseButton, MouseEvent, PaintCtx, Point,
-    Rect, RenderContext, Size, Target, UpdateCtx, Widget, WidgetId,
+    LayoutCtx, LifeCycle, LifeCycleCtx, Modifiers, MouseButton, MouseEvent,
+    PaintCtx, Point, Rect, RenderContext, Size, Target, TimerToken, UpdateCtx,
+    Widget, WidgetId,
 };
-use druid::{Modifiers, TimerToken};
-use lapce_core::buffer::DiffLines;
-use lapce_core::command::EditCommand;
 use lapce_core::{
-    command::FocusCommand,
+    buffer::DiffLines,
+    command::{EditCommand, FocusCommand},
     cursor::{ColPosition, CursorMode},
     mode::{Mode, VisualMode},
 };
-use lapce_data::command::CommandKind;
-use lapce_data::data::{EditorView, LapceData};
-use lapce_data::document::{BufferContent, LocalBufferKind};
-use lapce_data::history::DocumentHistory;
-use lapce_data::hover::HoverStatus;
-use lapce_data::keypress::KeyPressFocus;
-use lapce_data::menu::MenuKind;
-use lapce_data::palette::PaletteStatus;
-use lapce_data::panel::{PanelData, PanelKind};
-use lapce_data::selection_range::SyntaxSelectionRanges;
 use lapce_data::{
     command::{
-        LapceCommand, LapceUICommand, LapceWorkbenchCommand, LAPCE_UI_COMMAND,
+        CommandKind, LapceCommand, LapceUICommand, LapceWorkbenchCommand,
+        LAPCE_UI_COMMAND,
     },
     config::{LapceConfig, LapceTheme},
-    data::LapceTabData,
+    data::{EditorView, LapceData, LapceTabData},
+    document::{BufferContent, LocalBufferKind},
     editor::{LapceEditorBufferData, Syntax},
-    menu::MenuItem,
+    history::DocumentHistory,
+    hover::HoverStatus,
+    keypress::KeyPressFocus,
+    menu::{MenuItem, MenuKind},
+    palette::PaletteStatus,
+    panel::{PanelData, PanelKind},
+    selection_range::SyntaxSelectionRanges,
 };
 use lsp_types::{CodeActionOrCommand, DiagnosticSeverity};
 
@@ -890,6 +885,14 @@ impl LapceEditor {
                         bg,
                     );
                 }
+                if let Some(under_line) = &style.under_line {
+                    let x1 = x1.unwrap_or(self_size.width);
+                    let line = Line::new(
+                        Point::new(*x0, y + height),
+                        Point::new(x1, y + height),
+                    );
+                    ctx.stroke(line, under_line, 1.0);
+                }
             }
 
             if let Some(whitespace) = &text_layout.whitespace {
@@ -921,6 +924,19 @@ impl LapceEditor {
         } else {
             phantom_text.col_after(col, false)
         };
+
+        let col = data
+            .doc
+            .ime_text()
+            .map(|_| {
+                let (ime_line, _, shift) = data.doc.ime_pos();
+                if ime_line == line {
+                    col + shift
+                } else {
+                    col
+                }
+            })
+            .unwrap_or(col);
 
         let x0 = data
             .doc
@@ -1915,7 +1931,9 @@ impl Widget<LapceTabData> for LapceEditor {
                 match cmd.get_unchecked(LAPCE_UI_COMMAND) {
                     LapceUICommand::ShowCodeActions(point) => {
                         let editor_data = data.editor_view_content(self.view_id);
-                        if let Some(actions) = editor_data.current_code_actions() {
+                        if let Some((plugin_id, actions)) =
+                            editor_data.current_code_actions()
+                        {
                             if !actions.is_empty() {
                                 let mut menu = druid::Menu::new("");
 
@@ -1933,6 +1951,7 @@ impl Widget<LapceTabData> for LapceEditor {
                                         LAPCE_UI_COMMAND,
                                         LapceUICommand::RunCodeAction(
                                             action.clone(),
+                                            *plugin_id,
                                         ),
                                         Target::Widget(editor_data.view_id),
                                     ));
